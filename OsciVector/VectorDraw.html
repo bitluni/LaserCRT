@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvas Drawing with WebSocket</title>
+  <style>
+    body { display: flex; flex-direction: column; align-items: center; background: #f0f0f0; margin: 0; padding-top: 20px; font-family: Arial, sans-serif; }
+    #controls { display: flex; gap: 10px; margin-bottom: 10px; }
+    #status { margin-left: 5px; font-weight: bold; }
+    canvas { border: 1px solid black; cursor: crosshair; /*background-image: url("img/5.gif"); background-size: contain;*/}
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <input type="text" id="wsAddress" value = "ws://192.168.178.50" placeholder="ws://yourserver.com" style="width: 200px;">
+    <input type="range" id="speed" value="200" min="1" max="255" style="width: 200px;" oninput="sendSpeed(this.value);">
+    <button id="connectBtn">Connect</button>
+    <span id="status">Disconnected</span>
+    <button id="sendBtn" disabled>Send Lines</button>
+    <button id="resetBtn" disabled>Reset Lines</button>
+  </div>
+  <canvas id="drawingCanvas" width="256" height="256"></canvas>
+
+  <script>
+    const canvas = document.getElementById('drawingCanvas');
+    const ctx = canvas.getContext('2d');
+    const wsAddressInput = document.getElementById('wsAddress');
+    const connectBtn = document.getElementById('connectBtn');
+    const statusText = document.getElementById('status');
+    const sendBtn = document.getElementById('sendBtn');
+    const resetBtn = document.getElementById('resetBtn');
+
+    let ws;
+    let isDrawing = false;
+    let lineSegments = [];
+    let startX, startY;
+	let drag = false;
+
+    // Set drawing settings
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'black';
+
+    // Function to update connection status
+    function updateStatus(connected) {
+      statusText.textContent = connected ? 'Connected' : 'Disconnected';
+      statusText.style.color = connected ? 'green' : 'red';
+      sendBtn.disabled = !connected;
+    }
+
+    // Function to connect WebSocket
+    function connectWebSocket() {
+      const address = wsAddressInput.value;
+      if (!address) return alert('Please enter a WebSocket address.');
+      
+      ws = new WebSocket(address);
+
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        updateStatus(true);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        updateStatus(false);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        updateStatus(false);
+      };
+    }
+
+	function sendSpeed(speed)
+	{
+		const buffer = new Uint8Array(1);
+		buffer[0] = speed;
+		ws.send(buffer);
+	}
+    // Function to send line segments to WebSocket as binary
+    function sendLineSegments() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        //alert('WebSocket is not connected.');
+        return;
+      }
+
+      if (lineSegments.length === 0) {
+        alert('No line segments to send.');
+        return;
+      }
+
+      const buffer = new Uint8Array(lineSegments.length * 2);
+      lineSegments.forEach((point, index) => {
+        buffer[index * 2] = point[0];
+        buffer[index * 2 + 1] = point[1];
+      });
+
+      ws.send(buffer);
+      console.log('Line segments sent');
+    }
+	
+	function redraw()
+	{
+		let restart = true;
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		ctx.beginPath();
+		for(let i = 0; i < lineSegments.length; i++)
+			if(lineSegments[i][0] != 255)
+			{
+				if(restart)
+					ctx.moveTo(lineSegments[i][0], lineSegments[i][1]);
+				else
+					ctx.lineTo(lineSegments[i][0], lineSegments[i][1]);
+				restart = false;
+			}
+			else
+				restart = true;
+		ctx.stroke();
+	}
+
+    // Function to reset line segments
+    function resetLineSegments() {
+      lineSegments = [];
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      console.log('Line segments reset');
+    }
+
+    // Mouse event listeners for drawing
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0) 
+	  {
+        isDrawing = true;
+        startX = e.offsetX;
+        startY = e.offsetY;
+		drag = false;
+        lineSegments.push([startX, startY]);
+        lineSegments.push([startX, startY]);
+        resetBtn.disabled = false;
+		redraw();
+      }
+	  if(e.button == 2)
+	  {
+		if(lineSegments[lineSegments.length - 1][0] != 255)
+			lineSegments.push([255, 255]);
+	  }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+		const x = e.offsetX;
+		const y = e.offsetY;
+		if(Math.sqrt((startX - x) * (startX - x) + (startY - y) * (startY - y)) < 4)
+			return;
+		if (isDrawing) 
+		{
+			if(!drag)
+				lineSegments.pop();
+			drag = true;
+			lineSegments.push([x, y]);
+			[startX, startY] = [x, y];
+			redraw();
+		}
+		else
+		{
+			if(lineSegments.length && lineSegments[lineSegments.length - 1][0] != 255)
+			{
+				lineSegments[lineSegments.length - 1][0] = e.offsetX;
+				lineSegments[lineSegments.length - 1][1] = e.offsetY;
+				redraw();
+			}
+		}
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      if (e.button === 0) 
+	  {
+		if(drag)
+			lineSegments.push([255, 255]);
+        isDrawing = false;
+		let t = "{";
+		for(let i = 0; i < lineSegments.length; i++)
+		{
+			t += "{" + lineSegments[i][0] + ", " + lineSegments[i][1] + "}, ";
+		}
+		console.log(t + "}");
+		sendLineSegments();
+      }
+    });
+
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); // Prevent the context menu from appearing
+      isDrawing = false; // Finish the current line
+    });
+
+    // Button event listeners
+    connectBtn.addEventListener('click', connectWebSocket);
+    sendBtn.addEventListener('click', sendLineSegments);
+    resetBtn.addEventListener('click', resetLineSegments);
+
+    updateStatus(false); // Initial connection status
+  </script>
+</body>
+</html>
