@@ -1,5 +1,6 @@
 # contents
 
+* models contain the blender and STL files
 * StepperVectorCRT is the firmware for the Arduino Nano
 * Pattern is the firmware for the ESP32 drawing the [Lissajous](https://en.wikipedia.org/wiki/Lissajous_curve) pattern
 * OsciVector is the ESP32 firmware providing a websocket server that receives line segments to draw
